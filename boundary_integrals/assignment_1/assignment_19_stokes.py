@@ -8,19 +8,20 @@ import matplotlib.cm as cm
 from boundary_integrals.gaussleggrid import GaussLegGrid
 
 # Grid refinement
-n_corner_refine = 6
-n_all_refine = 0
+n_corner_refine = 1
+n_all_refine = 1
 # Plotting options
 L = 0.5
 eps = 0.05
 plot_grid = False
 # Settings for boundary + conditions
-setting = 1
+setting = 3
 # 1 - pipe flow, set inlet and outlet radii
 # 2 - stirring boundary condition, set u_tangential
 # 3 - Flow across surface with stream velocity at top boundary. Boundary is box with rough boundary
+# 4 - load cos-sine series from folder
 in_rad = 1.0      # Radius at inlet
-out_rad = 1.0          # Radius at outlet
+out_rad = 0.5          # Radius at outlet
 vol_in = 1.0        # Volume flowing through pipe per time unit. For setting 1 only
 u_tangental = 1.0   # Max stirring velocity, for setting 2,3 only
 roughness = 21      # Roughness of bottom boundary in setting 3
@@ -58,7 +59,8 @@ if setting in [1,2]:
         mask = (X <= 1 - eps) * (-1 + eps <= X) * (Y <= y_x - eps) * (-y_x + eps <= Y)
         # mask = (X <= 1-eps) * (-1+eps <= X) * (Y <= 1-eps) * (-1+eps <= Y)
         return mask
-else:
+
+elif setting==3:
     def tau(t):
         ones_t = np.ones_like(t)
         left_wall = -ones_t + 1j * in_rad * (1 - t * 2)
@@ -91,9 +93,41 @@ else:
         mask = (X <= 1 - eps) * (-1 + eps <= X) * (Y <= 1 - eps) * (y_x + eps <= Y)
         # mask = (X <= 1-eps) * (-1+eps <= X) * (Y <= 1-eps) * (-1+eps <= Y)
         return mask
+else:
+    func_dict = np.load("boundary_integrals/saved_cossin_bdries/curve.npy", allow_pickle=True).flatten()[0]
+    freqs = func_dict["weights"] * np.pi/2
+    sq_freqs = freqs**2
+    coefs = func_dict["coefs"]
+    coefs = (coefs[:,0] + 1j*coefs[:,1])[:,None]
+    n_freqs = len(freqs)
 
 
-# Boundary Conditions (Dirichlet)
+    tau = lambda t: (np.hstack([np.cos(t[:, None] @ freqs.T), np.sin(t[:, None] @ freqs[1:].T)]) @ coefs).flatten()
+    dtaudt = lambda t: (np.hstack([-np.sin(t[:,None] @ freqs.T)*freqs.T, np.cos(t[:,None] @ freqs[1:].T)*freqs[1:].T]) @ coefs).flatten()
+    ddtauddt = lambda t: (np.hstack([-np.cos(t[:,None] @ freqs.T)*sq_freqs.T, np.cos(t[:, None] @ freqs[1:].T)*sq_freqs[1:].T]) @ coefs).flatten()
+
+    t = np.linspace(0, 4, 200)
+    bdry_pts = tau(t)
+    normal = dtaudt(t) / 1j
+    normal = normal / np.abs(normal)
+    inner_bdry = (bdry_pts - eps * normal)
+    curvature = np.abs(ddtauddt(t))
+
+    plt.scatter(np.real(bdry_pts), np.imag(bdry_pts))
+    plt.scatter(np.real(inner_bdry), np.imag(inner_bdry))
+
+
+    discriminator = lambda z: np.sum(curvature[:,None,None] * (1 / np.abs(inner_bdry[:,None,None] - z) - 1 / np.abs(bdry_pts[:,None,None] - z)), axis=0)
+
+
+    def mask_fun(X, Y): # Just take square
+        Z = X + 1j * Y
+        mask = discriminator(Z[None,:]) > 0
+        # mask = (X <= 1-eps) * (-1+eps <= X) * (Y <= 1-eps) * (-1+eps <= Y)
+        return mask
+
+
+# Boundary Conditions (Dirichlet)s
 if setting == 1:
     def f(t):
         align=True
@@ -127,6 +161,7 @@ if setting == 1:
         v = u * (out_rad - in_rad) / 2 * y / rad
         uv = u + 1j * v
         return uv
+
 elif setting == 2:
     def f(t):
         y = np.imag(tau(t))
@@ -138,7 +173,7 @@ elif setting == 2:
 
     # No access to true solution
     F = None
-else:
+elif setting==3:
     # velocity decay towards boundary
     #decay = lambda s: np.log10(1 + 5*s)
     decay = lambda s: s
@@ -158,6 +193,10 @@ else:
         v = np.zeros_like(u)
         uv = u + 1j * v
         return uv
+else:
+
+    f = lambda t: dtaudt(t) * 1.0
+    F = None
 
 
 
@@ -219,6 +258,9 @@ gridObject.refine_corners_nply(n_corner_refine)
 
 gridpts, weights = gridObject.get_grid_and_weights()
 #np.abs(np.imag(np.sum(np.conjugate(f(gridpts)) * weights * dtaudt(gridpts))))
+
+
+
 u,omega, sysMat, sysVec, info = solve(gridpts, weights, tol=1e-15)
 print("System solved")
 
@@ -232,8 +274,8 @@ def f_slow(Z, fun):
     return U
 
 # Prepare solution
-#n_grid = 200
 n_grid = 500
+#n_grid = 1000
 x_mesh = np.linspace(-(1 + L), (1 + L), n_grid)
 y_mesh = np.linspace(-(1 + L), (1 + L), n_grid)
 
@@ -250,11 +292,7 @@ else:
 
 Uer = np.log10(np.abs(U-Utru))
 
-# Get mask
-mask = mask_fun(X, Y)
-U_mask = np.where(mask, U, np.nan + 1j*np.nan)
-Utru_mask = np.where(mask, Utru, np.nan + 1j*np.nan)
-Uer_mask = np.where(mask, Uer, np.nan)
+
 #U_mask = Utru_mask
 
 Nb = 2000 # Resolution of boundary
@@ -272,44 +310,65 @@ fb = f(tb)
 taus = tau(gridpts)
 dtaus = dtaudt(gridpts)
 
+# Special mask based on rbfs, have to create down here since the grid needs to be defined
+if setting == 4:
+    def mask_fun(X, Y):
+        #Just take square
+        Z = X + 1j * Y
+        p = 3
+        dtz = taus[:,None,None] - Z[None,:,:]
+        discriminator = np.sum(weights[:, None, None] * np.abs(dtaus)[:,None,None] * np.imag(dtz * np.conjugate(dtaus[:, None, None])) / np.abs(dtz) ** p, axis=0)
+        mask = (discriminator < 0) * (discriminator > -(3000)**(4/p))
+        # mask = (X <= 1-eps) * (-1+eps <= X) * (Y <= 1-eps) * (-1+eps <= Y)
+        return mask
+
+# Get mask
+mask = mask_fun(X, Y)
+U_mask = np.where(mask, U, np.nan + 1j*np.nan)
+Utru_mask = np.where(mask, Utru, np.nan + 1j*np.nan)
+Uer_mask = np.where(mask, Uer, np.nan)
 # Boundary values
 #plt.scatter(np.real(taus), np.imag(taus), c=f(gridpts))
 #plt.quiver(np.real(taus), np.imag(taus), -np.imag(dtaus)/np.abs(dtaus), np.real(dtaus)/np.abs(dtaus))
 #plt.scatter(np.real(taus)-0.03*np.imag(dtaus), np.imag(taus)+0.03*np.real(dtaus))
 #plt.colorbar()
-cmap = cm.get_cmap("cividis")
+cmap = cm.get_cmap("coolwarm")
 fig = plt.figure()
 plt.plot(np.real(zb), np.imag(zb), 'black', linewidth=2)
-plt.pcolormesh(X, Y, np.abs(U_mask), cmap="cividis")
+plt.pcolormesh(X, Y, np.abs(U_mask), cmap=cmap, vmax=1, vmin=0)
 plt.colorbar()#location="bottom")
 #plt.streamplot(X, Y, np.real(U_mask), np.imag(U_mask), linewidth=1, color="white", density=2)#, color=np.log(np.abs(U_mask)), cmap="inferno")
-plt.streamplot(X, Y, np.real(U), np.imag(U), linewidth=1, color="white", density=1)#, color=np.log(np.abs(U_mask)), cmap="inferno")
+plt.streamplot(X, Y, np.real(U), np.imag(U), linewidth=1, color="white", density=3)#, color=np.log(np.abs(U_mask)), cmap="inferno")
 idx = list(range(0,len(zb), 50))
 #plt.quiver(np.real(zb[idx]), np.imag(zb[idx]), np.real(fb[idx]), np.imag(fb[idx]), scale=10)
-plt.xlim([-(1+0.1), (1+0.1)])
-plt.ylim([-(1+0.1), (1+0.1)])
+plt.xlim([-(1+0.01), (1+0.01)])
+plt.ylim([-(1+0.01), (1+0.01)])
 remove_axis(plt.gca())
 plt.tight_layout()
 
-fig.savefig("boundary_integrals/figures/pipe_flow.png", bbox_inches="tight", dpi=200)
+fig.savefig("boundary_integrals/figures/curve_flow.png", bbox_inches="tight", dpi=200)
 
 
 # Plot Velocity field
 # # magma, cividis, gnuplot, coolwarm,inferno,seismic,summer,turbo
 cmap = cm.get_cmap('gist_yarg_r', 6)
-for velfield in [np.real(U_mask), np.imag(U_mask), np.real(Utru_mask), np.imag(Utru_mask), Uer_mask]:
+#for velfield in [np.real(U_mask), np.imag(U_mask), np.real(Utru_mask), np.imag(Utru_mask), Uer_mask]:
 #for velfield in [np.abs(np.real(Utru_mask-U_mask)), np.abs(np.imag(U_mask-Utru_mask))]:
+for velfield in [np.where(Uer_mask<-16, -16, Uer_mask)]:
     plt.figure(figsize=(8,7))
-    plt.pcolormesh(X, Y, velfield, shading='nearest', label="Solution", cmap=cmap)
+    plt.pcolormesh(X, Y, velfield, shading='nearest', label="Solution", cmap=cmap, vmax=0, vmin=-16)
     #plt.pcolormesh(X, Y, np.log10(np.abs(U-f_slow(Z,F))), shading='nearest', label="Solution", vmax=0, vmin=-16, cmap=cmap)
     plt.plot(np.real(zb), np.imag(zb), 'black', label="Boundary", linewidth=4)
     #plt.scatter(x_,y_,c=f_, label="Basis functions")
-    plt.xlim([-(1+L+0.01), (1+L+0.01)])
-    plt.ylim([-(1+L+0.01), (1+L+0.01)])
+    #plt.xlim([-(1+L+0.01), (1+L+0.01)])
+    #plt.ylim([-(1+L+0.01), (1+L+0.01)])
+    plt.xlim([-(1 + 0.01), (1 + 0.01)])
+    plt.ylim([-(1 + 0.01), (1 + 0.01)])
     remove_axis(plt.gca())
     plt.colorbar()#location="bottom")
     plt.tight_layout()
 
+plt.figure(1).savefig("boundary_integrals/figures/stokes_pipe_error.png", dpi=200)
 
 plt.figure()
 x = np.linspace(-1, 1, 100)

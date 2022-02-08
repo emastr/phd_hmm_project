@@ -57,7 +57,7 @@ def mask_fun(X, Y):
     return mask
 
 
-zp = 0 + 1.3j
+zp = -1.3 + 1.3j
 F = lambda z: np.imag(z ** 2 / (z - zp))
 f = lambda t: F(tau(t))
 
@@ -126,12 +126,15 @@ for i in range(1,20,5):
     plt.plot(gridpts, mu)
     #plt.scatter(gridpts, np.abs(mu),c=cols/cols[-1], cmap=cmap)
 
-idx0=50
-idx = 100
+idx0=10
+idx = 20
 #plt.scatter(gridpts[idx:], mu[idx:],c=cols[idx:]/cols[-1], cmap=cmap)
 yvals = np.abs(mu-mu[idx0])
-plt.plot(gridpts[idx:], 1.1*gridpts[idx:]**1.35, color='red', linewidth=4, label="$y=1.1x^{1.35}$")
-plt.plot(gridpts[idx:], yvals[idx:], '.', color='black',label="data")#,c=cols[idx:]/cols[-1], cmap=cmap)
+a = 0.4
+p = 0.67
+plt.plot(gridpts[idx:], a*gridpts[idx:]**p, color='red', linewidth=4, label="$y="+f"{a}" + "x^{" + f"{p}" + "}$")      # zp = -1.3 + 1.3i
+#plt.plot(gridpts[idx:], 1.1*gridpts[idx:]**1.35, color='red', linewidth=4, label="$y=1.1x^{1.35}$")    # zp = 0 + 1.3i
+plt.plot(gridpts[idx::6], yvals[idx::6], '.', color='black',label="data")#,c=cols[idx:]/cols[-1], cmap=cmap)
 plt.yscale("log")
 plt.xscale("log")
 plt.xlabel("$t$")
@@ -141,9 +144,11 @@ ax.spines["right"].set_visible(False)
 ax.spines["top"].set_visible(False)
 plt.title("Density near corner")
 plt.legend(edgecolor='none')
-plt.xlim([gridpts[90], gridpts[150]])
-plt.ylim([yvals[90], yvals[150]])
-plt.figure(1).savefig("boundary_integrals/figures/corner_density.pdf", bbox_inches="tight")
+plt.xlim([gridpts[idx], gridpts[250]])
+plt.ylim([yvals[idx], yvals[250]])
+#plt.xlim([gridpts[90], gridpts[150]])
+#plt.ylim([yvals[90], yvals[150]])
+plt.figure(1).savefig("boundary_integrals/figures/corner_density2.pdf", bbox_inches="tight")
 
 
 # Attempt at gradient descent

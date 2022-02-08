@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as im
 
 # Load Data
-image = im.imread("curve_fitting/laplace.png")
+image = im.imread("curve_fitting/curve.png")
 curve = image[::-1,:,0].T
 
 # Extract the "colored pixels"
@@ -56,7 +56,7 @@ coefs[N,1] = rad_y
 plt.imshow(image[:,:,0], extent=(-1,1,-1,1), cmap="Greys_r")
 #plt.scatter(train_data[:, 1], train_data[:, 2])
 step = 0.05
-K = 30000
+K = 10000
 n_t = 100
 n_subsample = 300
 p = 3
@@ -151,4 +151,7 @@ for k in range(K):
         plt.plot(gamma[:, 0], gamma[:, 1], color=[1 - k/K, 0, k/K])
 #plt.scatter(gamma[:,0], gamma[:, 1])
 
+
+func = {"weights": weights, "coefs": coefs}
+np.save("boundary_integrals/saved_cossin_bdries/curve", func, allow_pickle=True)
 #plt.scatter(train_data_subsample[:, 1], train_data_subsample[:, 2], c=args)
